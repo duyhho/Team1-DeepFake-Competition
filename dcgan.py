@@ -14,12 +14,14 @@ from torch.autograd import Variable
 use_cuda = torch.cuda.is_available()
 device = torch.device('cuda:0' if use_cuda else 'cpu')
 
+data_dir = './data/face_data'
 batchSize = 64 
 imageSize = 64 
 
 transform = transforms.Compose([transforms.Scale(imageSize), transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),]) # We create a list of transformations (scaling, tensor conversion, normalization) to apply to the input images.
 
-dataset = dset.CIFAR10(root = './data', download = True, transform = transform) # We download the training set in the ./data folder and we apply the previous transformations on each image.
+dataset = dset.ImageFolder(data_dir, transform=transform)
+# dataset = dset.CIFAR10(root = './data', download = True, transform = transform) # We download the training set in the ./data folder and we apply the previous transformations on each image.
 dataloader = torch.utils.data.DataLoader(dataset, batch_size = batchSize, shuffle = True, num_workers = 0) # We use dataLoader to get the images of the training set batch by batch.
 
 def weights_init(m):
@@ -95,7 +97,9 @@ loss_D_min = float('inf')
 for epoch in range(25):
 
     for i, data in enumerate(dataloader, 0):
-        
+        # As training progresses the discriminator improves at this task.
+        # But our end goal is attained at a theoretical point where the discriminator outputs 0.5
+        # for both types of inputs (i.e.indecisive if fake or real).
         netD.zero_grad()
         
         real, _ = data
@@ -103,14 +107,19 @@ for epoch in range(25):
         target = Variable(torch.ones(input.size()[0])).cuda()
         output = netD(input.cuda())
         errD_real = criterion(output, target)
-        
+        output = (output > 0.5).float()
+        correct_D_fake = ((output == target).float().sum())/output.shape[0]
+
         noise = Variable(torch.randn(input.size()[0], 100, 1, 1))
         fake = netG(noise.cuda())
         target = Variable(torch.zeros(input.size()[0])).cuda()
         output = netD(fake.detach())
         errD_fake = criterion(output, target)
-        
+        output = (output > 0.5).float()
+        correct_D_real = ((output == target).float().sum())/output.shape[0]
+
         errD = errD_real + errD_fake
+        correct_D = (correct_D_real + correct_D_fake)/2
         errD.backward()
         optimizerD.step()
 
@@ -120,14 +129,22 @@ for epoch in range(25):
         errG = criterion(output, target)
         errG.backward()
         optimizerG.step()
-        
-        if (errD.data <= loss_D_min):
-            print('FOUND MIN LOSS AT: [%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f' % (epoch, 25, i, len(dataloader), errD.data, errG.data))
-            loss_D_min = errD.data
-            torch.save(netG.state_dict(), './results/generator.pth')
-        print('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f' % (epoch, 25, i, len(dataloader), errD.data, errG.data))
+        output = (output > 0.5).float()
+        # print(output)
+        # print(target)
+        correct_G = ((output == target).float().sum()) / output.shape[0]
+
+        print('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f D_Accuracy: %.3f G_Accuracy: %.3f' % (epoch, 25, i, len(dataloader), errD.data, errG.data, correct_D, correct_G))
         if i % 100 == 0:
             vutils.save_image(real, '%s/real_samples.png' % "./results", normalize = True)
             fake = netG(noise.cuda())
             vutils.save_image(fake.data, '%s/fake_samples_epoch_%03d.png' % ("./results", epoch), normalize = True)
+            torch.save(netG.state_dict(), '%s/generator-%03d.pth' % ("./results", epoch))
+            # # Accuracy
+            # output = (output > 0.5).float()
+            #
+            # print("Epoch {}/{}, Loss: {:.3f}, Accuracy: {:.3f}".format(epoch + 1, 25, errD.data,
+            #                                                            correct_D))
+            # print("Epoch {}/{}, Loss: {:.3f}, Accuracy: {:.3f}".format(epoch + 1, 25, errD.data,
+            #                                                            correct_D))
 
